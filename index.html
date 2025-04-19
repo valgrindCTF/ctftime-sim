@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTFtime Simulator</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/N3rdL0rd/holiday.css/dist/holiday.min.css">
+</head>
+<body>
+    <h1>CTFtime Simulator</h1>
+    <p>This little app allows you to see what would happen on the global leaderboard given a scoring scenario.</p>
+    
+    <button id="fetchBtn">Fetch Leaderboard Data</button>
+    
+    <div class="form-row">
+        <label for="teamName">Team name:</label>
+        <input type="text" id="teamName" placeholder="Team name">
+    </div>
+    <div class="form-row">
+        <label for="teamPlace">Place in event:</label>
+        <input type="number" id="teamPlace" placeholder="Place" min="1">
+    </div>
+    <div class="form-row">
+        <label for="teamPoints">Team points:</label>
+        <input type="number" id="teamPoints" placeholder="Points" min="0" step="0.01">
+    </div>
+    <div class="form-row">
+        <label for="bestPoints">Winner's points:</label>
+        <input type="number" id="bestPoints" placeholder="Best points" min="0" step="0.01">
+    </div>
+    <div class="form-row">
+        <label for="totalTeams">Total teams:</label>
+        <input type="number" id="totalTeams" placeholder="Total teams" min="1">
+    </div>
+    <div class="form-row">
+        <label for="eventWeight">Event weight:</label>
+        <input type="number" id="eventWeight" placeholder="Weight" min="0" step="0.01">
+    </div>
+    <button id="updateBtn">Update Leaderboard</button>
+    <br>
+    
+    <div id="loading" style="display: none;">Loading data...</div>
+    <div id="error" style="display: none;"></div>
+    
+    <div class="container">
+        <div id="teamList"></div>
+    </div>
+
+    <script>
+        let teamsData = {}; // This will store our processed data
+
+        document.getElementById('fetchBtn').addEventListener('click', fetchLeaderboardData);
+        document.getElementById('updateBtn').addEventListener('click', updateLeaderboard);
+
+        async function fetchLeaderboardData() {
+            const loadingElement = document.getElementById('loading');
+            const errorElement = document.getElementById('error');
+            const teamListElement = document.getElementById('teamList');
+            
+            loadingElement.style.display = 'block';
+            errorElement.style.display = 'none';
+            teamListElement.innerHTML = '';
+
+            try {
+                // Note: We need to use a CORS proxy since CTFtime API doesn't allow direct browser requests
+                const currentYear = new Date().getFullYear();
+                const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+                const apiUrl = `https://ctftime.org/api/v1/top/${currentYear}/?limit=100`;
+                
+                const response = await fetch(proxyUrl + apiUrl, {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                processLeaderboardData(data);
+                displayTeamsData();
+                
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                errorElement.textContent = 'Error fetching data: ' + error.message + 
+                    '. Note: You may need to request temporary access to the CORS demo server at https://cors-anywhere.herokuapp.com/';
+                errorElement.style.display = 'block';
+            } finally {
+                loadingElement.style.display = 'none';
+            }
+        }
+
+        function processLeaderboardData(data) {
+            teamsData = {};
+            
+            const currentYear = Object.keys(data)[0];
+            const teamsArray = data[currentYear];
+            
+            teamsArray.forEach(team => {
+                const teamName = team.team_name;
+                
+                teamsData[teamName] = {
+                    totalPoints: team.points,
+                    originalPoints: team.points, // Keep track of original points
+                    team_id: team.team_id,
+                    points: []
+                };
+            });
+            
+            console.log('Processed teams data:', teamsData);
+        }
+
+        function calculateCTFtimeRating(teamPoints, bestPoints, teamPlace, totalTeams, eventWeight) {
+            // Formula from CTFtime:
+            // points_coef = team_points / best_points
+            // place_coef = 1 / team_place
+            // rating_event = (points_coef + place_coef) * weight / (1 + team_place/total_teams)
+            
+            const pointsCoef = teamPoints / bestPoints;
+            const placeCoef = 1 / teamPlace;
+            
+            if (pointsCoef > 0) {
+                return (pointsCoef + placeCoef) * eventWeight / (1 + teamPlace/totalTeams);
+            }
+            return 0;
+        }
+
+        function updateLeaderboard() {
+            const teamName = document.getElementById('teamName').value.trim();
+            const teamPlace = parseInt(document.getElementById('teamPlace').value);
+            const teamPoints = parseFloat(document.getElementById('teamPoints').value);
+            const bestPoints = parseFloat(document.getElementById('bestPoints').value);
+            const totalTeams = parseInt(document.getElementById('totalTeams').value);
+            const eventWeight = parseFloat(document.getElementById('eventWeight').value);
+            
+            // Input validation
+            if (!teamName || isNaN(teamPlace) || isNaN(teamPoints) || isNaN(bestPoints) || 
+                isNaN(totalTeams) || isNaN(eventWeight)) {
+                alert("Please fill in all fields with valid values.");
+                return;
+            }
+            
+            if (teamPlace < 1 || totalTeams < 1 || bestPoints <= 0) {
+                alert("Place must be at least 1, total teams must be at least 1, and best points must be greater than 0.");
+                return;
+            }
+            
+            // Reset to original points
+            for (const team in teamsData) {
+                if (teamsData[team].originalPoints !== undefined) {
+                    teamsData[team].totalPoints = teamsData[team].originalPoints;
+                }
+            }
+            
+            // Calculate new rating points for the selected team
+            const ratingPoints = calculateCTFtimeRating(teamPoints, bestPoints, teamPlace, totalTeams, eventWeight);
+            
+            // If team doesn't exist, add it
+            if (!teamsData[teamName]) {
+                teamsData[teamName] = {
+                    totalPoints: ratingPoints,
+                    originalPoints: 0,
+                    team_id: "Simulated",
+                    points: []
+                };
+            } else {
+                // Add the new points to the team's total
+                teamsData[teamName].totalPoints += ratingPoints;
+            }
+            
+            displayTeamsData(teamName); // Highlight the updated team
+        }
+
+        function displayTeamsData(highlightTeam = null) {
+            const teamListElement = document.getElementById('teamList');
+            teamListElement.innerHTML = '';
+        
+            const sortedTeams = Object.entries(teamsData).sort((a, b) => 
+                b[1].totalPoints - a[1].totalPoints
+            );
+            
+            // Create table elements
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+            
+            // Create table header row
+            const headerRow = document.createElement('tr');
+            ['Rank', 'Team Name', 'Team ID', 'Total Points'].forEach(headerText => {
+                const th = document.createElement('th');
+                th.textContent = headerText;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+            
+            // Create table body with team data
+            sortedTeams.forEach(([teamName, teamData], index) => {
+                const row = document.createElement('tr');
+                
+                // Highlight the row if it's the team that was updated
+                if (highlightTeam && teamName === highlightTeam) {
+                    row.classList.add('highlighted');
+                }
+                
+                const rankCell = document.createElement('td');
+                rankCell.textContent = index + 1;
+                
+                const nameCell = document.createElement('td');
+                nameCell.textContent = teamName;
+                
+                const idCell = document.createElement('td');
+                idCell.textContent = teamData.team_id;
+                
+                const pointsCell = document.createElement('td');
+                pointsCell.textContent = teamData.totalPoints.toFixed(2);
+                
+                row.appendChild(rankCell);
+                row.appendChild(nameCell);
+                row.appendChild(idCell);
+                row.appendChild(pointsCell);
+                
+                tbody.appendChild(row);
+            });
+            
+            table.appendChild(tbody);
+            teamListElement.appendChild(table);
+        }
+    </script>
+</body>
+</html>
